@@ -1,14 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Modal, FlatList } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, StyleSheet, TouchableOpacity, Text, Modal, FlatList, TextInput, Keyboard } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 import * as Location from 'expo-location';
 import MapViewDirections from 'react-native-maps-directions';
-import { FAB, List, Searchbar, TextInput } from 'react-native-paper';
+import { FAB, List, Snackbar } from 'react-native-paper';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, push, onValue, get, set } from 'firebase/database';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import CarIcon from './carro.png'; 
+import CarIcon from './carro-novo.png';
+import EstacionamentoIcon from './estacionamento.png';
+import EstacionamentoIconSelecionado from './estacionamento-selecionado.png';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLyW23PzMoK710i2I0-iDOID96x28ka0g",
@@ -21,8 +24,7 @@ const firebaseConfig = {
 };
 
 const App = () => {
-  const [selectedLocation, setSelectedLocation] = useState(null); 
-  const [location, setLocation] = useState(null);
+  const [selectedLocation, setSelectedLocation] = useState(null);
   const [locationSave, setLocationSave] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [chaveApi, setChaveApi] = useState('AIzaSyBLyW23PzMoK710i2I0-iDOID96x28ka0g');
@@ -30,17 +32,22 @@ const App = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [savedLocations, setSavedLocations] = useState([]);
   const [locationName, setLocationName] = useState('');
-  const [searchedLocation, setSearchedLocation] = useState(null);
+  const [destino, setDestino] = useState({});
   const [directions, setDirections] = useState([]);
   const [search, setSearch] = useState('');
+  const [visible, setVisible] = useState(false);
+  const [message, setMessage] = useState(false);
 
+  const mapRef = useRef(null); 
+  
+  const onDismissSnackBar = () => setVisible(false);
 
   useEffect(() => {
     const firebaseApp = initializeApp(firebaseConfig);
     const db = getDatabase(firebaseApp);
 
     getLocation();
-    loadSavedLocations(db); 
+    loadSavedLocations(db);
 
     const id = Location.watchPositionAsync(
       {
@@ -141,7 +148,27 @@ const App = () => {
     }
   };
 
+  const onToggleSnackBar = (text) => {
+    setVisible(!visible)
+    setMessage(text)
+  };
+
   const handleRoute = (item) => {
+    setSearch("")
+    onToggleSnackBar("Rota definida para: "+item.name) 
+    Keyboard.dismiss() 
+    setDestino(item);
+    
+
+    const updatedRegion = {
+      latitude: item ? item.latitude : currentLocation.lat,
+      longitude: item ? item.longitude : currentLocation.lng,
+      latitudeDelta: 0.0922,
+      longitudeDelta: 0.0421,
+    };
+
+    setSelectedLocation(item ? null : updatedRegion);
+          
     if (currentLocation && item) {
       setDirections([
         {
@@ -155,13 +182,16 @@ const App = () => {
           },
           apikey: chaveApi,
           strokeWidth: 3,
-          strokeColor: 'blue',
+          strokeColor: 'black',
         },
       ]);
     }
+
+    mapRef.current?.animateToRegion(updatedRegion, 1000);
   }
 
   const handleLocationSearch = async (text) => {
+    setDirections([]);
     const marcadoresRef = ref(getDatabase(), 'marcadores');
     const snapshot = await get(marcadoresRef);
 
@@ -181,29 +211,30 @@ const App = () => {
   };
 
   return (
-    <View style={styles.container}>
-      <MapView
-        style={styles.map}
-        region={{
-          latitude: selectedLocation ? selectedLocation.lat : currentLocation?.lat || DEFAULT_LATITUDE,
-          longitude: selectedLocation ? selectedLocation.lng : currentLocation?.lng || DEFAULT_LONGITUDE,
-          latitudeDelta: 0.0922,
-          longitudeDelta: 0.0421,
-        }}
-      >
-        {directions.map((direction, index) => (
-          <MapViewDirections
-            key={index}
-            origin={direction.origin}
-            destination={direction.destination}
-            apikey={direction.apikey}
-            strokeWidth={direction.strokeWidth}
-            strokeColor={direction.strokeColor}
-          />
-        ))}
+    <SafeAreaProvider>
+      <View style={styles.container}>
+        <MapView
+          ref={(map) => (mapRef.current = map)}
+          style={styles.map}
+          region={{
+            latitude: selectedLocation ? selectedLocation.lat : currentLocation?.lat || DEFAULT_LATITUDE,
+            longitude: selectedLocation ? selectedLocation.lng : currentLocation?.lng || DEFAULT_LONGITUDE,
+            latitudeDelta: 0.0922,
+            longitudeDelta: 0.0421,
+          }}
+        >
+          {directions.map((direction, index) => (
+            <MapViewDirections
+              key={index}
+              origin={direction.origin}
+              destination={direction.destination}
+              apikey={direction.apikey}
+              strokeWidth={direction.strokeWidth}
+              strokeColor={direction.strokeColor}
+            />
+          ))}
 
-        {selectedLocation && (
-          <>
+          {currentLocation && (
             <Marker
               coordinate={{
                 latitude: currentLocation.lat,
@@ -214,114 +245,124 @@ const App = () => {
               image={CarIcon}
               style={{ width: 40, height: 40 }}
             />
+          )}
+
+          {savedLocations.map((location, index) => (
             <Marker
-              coordinate={{
-                latitude: selectedLocation.lat,
-                longitude: selectedLocation.lng,
-              }}
-              title={selectedLocation.name}
+              key={index}
+              coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+              title={location.name}
+              image={
+                location === destino
+                  ? EstacionamentoIconSelecionado
+                  : EstacionamentoIcon
+              }
             />
-          </>
-        )}
-
-        {searchedLocation && (
-          <Marker
-            coordinate={{
-              latitude: searchedLocation.lat,
-              longitude: searchedLocation.lng,
+          ))}
+        </MapView>
+        <View style={styles.inputPesquisa}
+        >
+          <TextInput
+            placeholder="Pesquisar Estacionamento"
+            mode="outlined"
+            style={styles.input}
+            value={search}
+            onChangeText={(text) => {
+              setSearch(text),
+                handleLocationSearch(text)
             }}
-            title={searchedLocation.name}
-            pinColor="orange"
           />
-        )}
-
-        {savedLocations.map((location, index) => (
-          <Marker
-            key={index}
-            coordinate={{ latitude: location.latitude, longitude: location.longitude }}
-            title={location.name}
-            pinColor="green"
-          />
-        ))}
-      </MapView>
-      <View style={styles.inputPesquisa}
-      >
-        <Searchbar
-          placeholder="Pesquisar Estacionamento"
-          mode="outlined"
-          value={search}
-          onChangeText={(text) => {
-            setSearch(text),
-              handleLocationSearch(text)
-          }}
-        />
-        {
-          savedLocations && search && (
-            <View style={styles.viewPesquisa}>
-              {savedLocations.map((item, i) => (
-                <List.Item
-                  key={i}
-                  onPress={() => handleRoute(item)}
-                  title={item.name}
-                  description={item.description}
-                  left={(props) => <List.Icon {...props} icon="marker" />}
-                />
-              ))}
-            </View>
-          )
-        }
-      </View>
-      <FAB
-        icon="plus"
-        color='white'
-        style={styles.fab}
-        onPress={() => setModalVisible(true)}
-      />
-
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Adicionar Local</Text>
-
-            <TextInput
-              placeholder="Nome do local"
-              mode='outlined'
-              style={styles.input}
-              value={locationName}
-              onChangeText={(text) => setLocationName(text)}
-            />
-
-            <GooglePlacesAutocomplete
-              placeholder="Pesquisar"
-              onPress={handleLocationSelect}
-              query={{
-                key: chaveApi,
-                language: 'pt-BR',
-              }}
-              style={styles.labbelPesquisa}
-            />
-
-            <TouchableOpacity
-              style={styles.saveButton}
-              onPress={handleSaveLocation}
-            >
-              <Text style={styles.saveButtonText}>Salvar Estacionamento</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setModalVisible(false)}
-            >
-              <Text style={styles.closeButtonText}>Fechar</Text>
-            </TouchableOpacity>
-          </View>
+          {
+            savedLocations && search && (
+              <View style={styles.viewPesquisa}>
+                {savedLocations.map((item, i) => (
+                  <List.Item
+                    key={i}
+                    onPress={() => handleRoute(item)}
+                    title={item.name}
+                    description={item.description}
+                    left={(props) => <List.Icon {...props} icon="marker" />}
+                  />
+                ))}
+              </View>
+            )
+          }
         </View>
-      </Modal>
-    </View>
+        <FAB
+          icon="plus"
+          color='white'
+          style={styles.fab}
+          onPress={() => setModalVisible(true)}
+        />
+        <Snackbar
+          visible={visible}
+          onDismiss={onDismissSnackBar}
+          rippleColor={'white'}
+          style={{backgroundColor: 'black'}} 
+          action={{
+            label: 'Undo',
+            onPress: () => {
+              // Do something
+            },
+          }}>
+          {message}
+        </Snackbar>
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={modalVisible}
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Cadastrar Estacionamento</Text>
+
+              <TextInput
+                placeholder="Nome do local"
+                mode='outlined'
+                style={styles.input}
+                value={locationName}
+                onChangeText={(text) => setLocationName(text)}
+              />
+              <GooglePlacesAutocomplete
+                placeholder="Pesquisar"
+                onPress={handleLocationSelect}
+                styles={{
+                  textInput: {
+                    height: 60,
+                    padding: 10,
+                    borderWidth: 0.6,
+                    borderRadius: 6,
+                    borderColor: 'black',
+                    marginBottom: 10,
+                  },
+                  predefinedPlacesDescription: {
+                    color: '#1faadb',
+                  },
+                }}
+                query={{
+                  key: chaveApi,
+                  language: 'pt-BR',
+                }}
+              />
+
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={handleSaveLocation}
+              >
+                <Text style={styles.saveButtonText}>Salvar Estacionamento</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={styles.closeButtonText}>Fechar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    </SafeAreaProvider>
   );
 };
 
@@ -361,14 +402,16 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   input: {
-    height: 40,
-    height: 50,
-    borderWidth: 0,
-    borderColor: 'white',
+    height: 60,
+    padding: 10,
+    borderWidth: 1,
+    borderRadius: 6,
+    backgroundColor: 'white',
+    borderColor: 'black',
     marginBottom: 10,
   },
   saveButton: {
-    backgroundColor: '#7ad6a1',
+    backgroundColor: 'black',
     padding: 10,
     borderRadius: 5,
     alignItems: 'center',
@@ -379,13 +422,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   closeButton: {
-    backgroundColor: 'red',
+    backgroundColor: 'white',
     padding: 10,
     borderRadius: 5,
     alignItems: 'center',
   },
   closeButtonText: {
-    color: 'white',
+    color: 'black',
     fontWeight: 'bold',
   },
   viewPesquisa: {
@@ -398,7 +441,7 @@ const styles = StyleSheet.create({
     right: 10,
   },
   fab: {
-    backgroundColor: '#7ad6a1',
+    backgroundColor: 'black',
     position: 'absolute',
     margin: 16,
     right: 0,
